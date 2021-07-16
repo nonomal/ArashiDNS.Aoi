@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Buffers;
 using System.Linq;
 using System.Net;
 using System.Threading.Tasks;
@@ -26,7 +25,7 @@ namespace Arashi.Aoi.Routes
                 var queryDictionary = context.Request.Query;
                 if (context.Request.Method == "POST")
                     await ReturnContext(context, true,
-                        DnsQuery(DnsMessage.Parse((await context.Request.BodyReader.ReadAsync()).Buffer.ToArray()),
+                        DnsQuery(await DNSParser.FromPostByteAsync(context),
                             context));
                 else if (queryDictionary.ContainsKey("dns"))
                     await ReturnContext(context, true,
@@ -34,7 +33,7 @@ namespace Arashi.Aoi.Routes
                             context));
                 else if (queryDictionary.ContainsKey("name"))
                     await ReturnContext(context, false,
-                        DnsQuery(DNSParser.FromQueryContext(context, EcsDefaultMask: Config.EcsDefaultMask),
+                        DnsQuery(DNSParser.FromDnsJson(context, EcsDefaultMask: Config.EcsDefaultMask),
                             context));
                 else
                     await context.WriteResponseAsync(Startup.IndexStr, type: "text/html");
@@ -42,7 +41,7 @@ namespace Arashi.Aoi.Routes
         }
 
         public static async Task ReturnContext(HttpContext context, bool returnMsg, DnsMessage dnsMsg,
-            bool cache = true)
+            bool cache = true, bool transId = false)
         {
             try
             {
@@ -60,12 +59,16 @@ namespace Arashi.Aoi.Routes
                         await context.WriteResponseAsync(DnsJsonEncoder.Encode(dnsMsg).ToString(Formatting.None),
                             type: "application/json", headers: Startup.HeaderDict);
                     else
-                        await context.WriteResponseAsync(DnsEncoder.Encode(dnsMsg), type: "application/dns-message");
+                        await context.WriteResponseAsync(
+                            DnsEncoder.Encode(dnsMsg, transId),
+                            type: "application/dns-message");
                 }
                 else
                 {
                     if (GetClientType(queryDictionary, "message"))
-                        await context.WriteResponseAsync(DnsEncoder.Encode(dnsMsg), type: "application/dns-message");
+                        await context.WriteResponseAsync(
+                            DnsEncoder.Encode(dnsMsg, transId),
+                            type: "application/dns-message");
                     else
                         await context.WriteResponseAsync(DnsJsonEncoder.Encode(dnsMsg).ToString(Formatting.None),
                             type: "application/json", headers: Startup.HeaderDict);
@@ -106,7 +109,7 @@ namespace Arashi.Aoi.Routes
         public static DnsMessage DnsQuery(IPAddress ipAddress, DnsMessage dnsMessage, int port = 53, int timeout = 1500)
         {
             if (port == 0) port = 53;
-            var client = new DnsClient(ipAddress, timeout)
+            var client = new ARSoft.Tools.Net.Dns.DnsClient(ipAddress, timeout)
                 {IsUdpEnabled = !Config.OnlyTcpEnable, IsTcpEnabled = true};
             for (var i = 0; i < Config.Retries; i++)
             {
@@ -114,7 +117,7 @@ namespace Arashi.Aoi.Routes
                 if (aMessage != null) return aMessage;
             }
 
-            return new DnsClient(ipAddress, timeout, port)
+            return new ARSoft.Tools.Net.Dns.DnsClient(ipAddress, timeout, port)
                 {IsTcpEnabled = true, IsUdpEnabled = false}.SendMessage(dnsMessage);
         }
 

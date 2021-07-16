@@ -22,14 +22,14 @@ namespace Arashi
                 });
         }
 
-        public static byte[] Encode(DnsMessage dnsMsg)
+        public static byte[] Encode(DnsMessage dnsMsg, bool transId = false)
         {
             if (info == null) Init();
 
             dnsMsg.IsRecursionAllowed = true;
             dnsMsg.IsRecursionDesired = true;
             dnsMsg.IsQuery = false;
-            dnsMsg.TransactionID = 0;
+            if (!transId) dnsMsg.TransactionID = 0;
             dnsMsg.IsEDnsEnabled = false;
             dnsMsg.AdditionalRecords.Clear();
 
@@ -44,7 +44,7 @@ namespace Arashi
             return bytesTrimEnd(args[1] as byte[]);
         }
 
-        private static byte[] bytesTrimEnd(byte[] bytes)
+        private static byte[] bytesTrimEnd(byte[] bytes, bool appendZero = false)
         {
             var list = bytes.ToList();
             for (var i = bytes.Length - 1; i >= 0; i--)
@@ -55,6 +55,7 @@ namespace Arashi
                     break;
             }
 
+            if (appendZero) list.AddRange(new byte[] {0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
             return list.ToArray();
         }
 
