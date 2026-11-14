@@ -2,6 +2,7 @@
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
@@ -142,11 +143,10 @@ namespace Arashi.Aoi
                 if (upOption.HasValue()) Config.UpStream = upOption.Value();
                 if (buOption.HasValue()) Config.BackUpStream = buOption.Value();
                 if (timeoutOption.HasValue()) Config.TimeOut = timeoutOption.ParsedValue;
-                if (retriesOption.HasValue()) Config.Retries = retriesOption.ParsedValue;
                 if (perfixOption.HasValue()) Config.QueryPerfix = "/" + perfixOption.Value().Trim('/').Trim('\\');
                 Config.CacheEnable = cacheOption.HasValue();
                 Config.ChinaListEnable = chinaListOption.HasValue();
-                Config.RankEnable = rankOption.HasValue();
+                //Config.RankEnable = rankOption.HasValue();
                 Config.LogEnable = logOption.HasValue();
                 Config.OnlyTcpEnable = tcpOption.HasValue();
                 Config.EcsEnable = !noecsOption.HasValue();
@@ -167,7 +167,7 @@ namespace Arashi.Aoi
                     if (val == "none" || val == "null" || val == "off") Config.CacheEnable = false;
                 }
 
-                if (Config.CacheEnable && Config.GeoCacheEnable || syncmmdbOption.HasValue() || Config.RankEnable)
+                if (Config.CacheEnable && Config.GeoCacheEnable || syncmmdbOption.HasValue() /*|| Config.RankEnable*/)
                 {
                     var setupBasePath = AppDomain.CurrentDomain.SetupInformation.ApplicationBase;
                     Console.WriteLine(
@@ -237,7 +237,7 @@ namespace Arashi.Aoi
                         options.Limits.MaxRequestBodySize = 1024;
                         options.Listen(ipEndPoint, listenOptions =>
                         {
-                            listenOptions.Protocols = HttpProtocols.Http1AndHttp2;
+                            listenOptions.Protocols = HttpProtocols.Http1AndHttp2AndHttp3;
                             if (!httpsOption.HasValue()) return;
                             if (!pfxOption.HasValue() && !pemOption.HasValue()) listenOptions.UseHttps();
                             if (pfxOption.HasValue())
@@ -322,7 +322,7 @@ namespace Arashi.Aoi
                 Task.Run(() =>
                 {
                     Console.WriteLine($"Downloading {file}...");
-                    new WebClient().DownloadFile(url, setupBasePath + file);
+                    File.WriteAllBytes(setupBasePath + file, new HttpClient().GetByteArrayAsync(url).Result);
                     Console.WriteLine(file + " Download Done");
                 });
         }

@@ -2,21 +2,18 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net5.0</TargetFramework>
-    <IlcOptimizationPreference>Speed</IlcOptimizationPreference>
-    <IlcFoldIdenticalMethodBodies>true</IlcFoldIdenticalMethodBodies>
-    <EnableUnsafeBinaryFormatterSerialization>true</EnableUnsafeBinaryFormatterSerialization>
-    <RestoreAdditionalProjectSources>
-      https://pkgs.dev.azure.com/dnceng/public/_packaging/dotnet-experimental/nuget/v3/index.json
-    </RestoreAdditionalProjectSources>
+    <TargetFramework>net10.0</TargetFramework>
+    <PublishAot>true</PublishAot>
+    <StripSymbols>true</StripSymbols>
+    <!-- <IlcOptimizationPreference>Speed</IlcOptimizationPreference> -->
+    <!-- <IlcFoldIdenticalMethodBodies>true</IlcFoldIdenticalMethodBodies> --><!-- <NativeAOT>true</NativeAOT> -->
+
+    <ValidateExecutableReferencesMatchSelfContained>false</ValidateExecutableReferencesMatchSelfContained>
+    <EnablePreviewFeatures>true</EnablePreviewFeatures>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Arashi.Aoi\Arashi.Aoi.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <PackageReference Include="Microsoft.DotNet.ILCompiler" Version="7.0.0-alpha.1.21477.1" />
   </ItemGroup>
 
 </Project>

@@ -1,6 +1,6 @@
 
 <p align="center">
-          <a href='https://github.com/mili-tan/ArashiDNS.Aoi'><img src='https://mili.one/pics/ArashiAoi1.png' width="50%" height="50%"/></a></p>
+          <a href='https://github.com/mili-tan/ArashiDNS.Aoi'><img src='https://mili.one/pics/arashiaoi2.png' width="70%" height="70%"/></a></p>
 <p align="center">
           <a href='https://github.com/mili-tan/ArashiDNS.Aoi/blob/master/README-zhs.md'><img src='https://mili.one/shields/zh-Hans-README.svg' alt='中文简体 Readme' referrerPolicy='no-referrer' /></a>
           <!--- a href='https://github.com/mili-tan/ArashiDNS.Aoi/blob/master/README-zht.md'><img src='https://mili.one/shields/zh-Hant-README.svg' alt='中文繁體/正體 Readme' referrerPolicy='no-referrer' /></a --->
@@ -25,6 +25,15 @@ If you get `Permission denied`, run `chmod +x ./Arashi.Aoi` to grant execution p
 OR using Docker. `docker run -d -p 2020:2020 ghcr.io/mili-tan/arashidns.aoi --upstream 8.8.8.8` 
 
 It is that easy. Use `--help` / `-?` to discover more parameters and get help information.
+
+
+
+```
+wget https://t.mili.one/arashia-linux-x64 -O /usr/bin/arashia
+wget https://t.mili.one/arashia.service -O /etc/systemd/system/arashia@.service
+chmod +x /usr/bin/arashia 
+systemctl enable arashia@1.0.0.1 --now
+```
 
 ## Introduction
 
@@ -119,3 +128,5 @@ Check out [Credits](https://github.com/mili-tan/ArashiDNS.Aoi/blob/master/CREDIT
 ## License
 
 Copyright (c) 2020 Milkey Tan. Code released under the [Mozilla Public License 2.0](https://www.mozilla.org/en-US/MPL/2.0/). 
+
+<sup>ArashiDNS™ is a trademark of Milkey Tan.</sup>

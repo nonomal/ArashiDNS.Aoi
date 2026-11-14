@@ -1,12 +1,13 @@
 ﻿using System;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography.X509Certificates;
-using System.Threading;
 using System.Threading.Tasks;
 using ARSoft.Tools.Net;
 using ARSoft.Tools.Net.Dns;
@@ -43,8 +44,8 @@ namespace Arashi.Aoi
                 CommandOptionType.SingleValue);
             var timeoutOption = cmd.Option<int>("-t|--timeout <Timeout(ms)>", "Set timeout for query to upstream DNS server <500>",
                 CommandOptionType.SingleValue);
-            var retriesOption = cmd.Option<int>("-r|--retries <Int>", "Set number of retries for query to upstream DNS server <5>",
-                CommandOptionType.SingleValue);
+            //var retriesOption = cmd.Option<int>("-r|--retries <Int>", "Set number of retries for query to upstream DNS server <5>",
+            //    CommandOptionType.SingleValue);
             var perfixOption = cmd.Option<string>("-p|--perfix <PerfixString>", "Set your DNS over HTTPS server query prefix </dns-query>",
                 CommandOptionType.SingleValue);
 
@@ -64,6 +65,7 @@ namespace Arashi.Aoi
             var syncmmdbOption = cmd.Option<string>("--syncmmdb", "Sync MaxMind GeoLite2 DB", CommandOptionType.NoValue);
             var synccnlsOption = cmd.Option<string>("--synccnls", "Sync China White List", CommandOptionType.NoValue);
             var noecsOption = cmd.Option("--noecs", "Set force disable active EDNS Client Subnet", CommandOptionType.NoValue);
+            var notlimitedOption = cmd.Option("--notlimited", "Set disable access rate limit, can be configured in appsettings.json", CommandOptionType.NoValue);
             var transidOption = cmd.Option("--transid", "Set enable DNS Transaction ID", CommandOptionType.NoValue);
             var showOption = cmd.Option("--show", "Show current active configuration", CommandOptionType.NoValue);
             var saveOption = cmd.Option("--save", "Save active configuration to config.json file", CommandOptionType.NoValue);
@@ -72,17 +74,21 @@ namespace Arashi.Aoi
             var loadcnOption = cmd.Option<string>("--loadcn:<FilePath>", "Load existing configuration from cnlist.json file [./cnlist.json]",
                 CommandOptionType.SingleOrNoValue);
             var testOption = cmd.Option("-e|--test", "Exit after passing the test", CommandOptionType.NoValue);
+            var hostOption = cmd.Option<string>("--host <HostName>", "Specifying allowed hostname", CommandOptionType.NoValue);
 
             var ipipOption = cmd.Option("--ipip", string.Empty, CommandOptionType.NoValue);
-            var rankOption = cmd.Option("--rank", string.Empty, CommandOptionType.NoValue);
+            var udsOption = cmd.Option("--uds", string.Empty, CommandOptionType.NoValue);
+            //var rankOption = cmd.Option("--rank", string.Empty, CommandOptionType.NoValue);
             var adminOption = cmd.Option("--admin", string.Empty, CommandOptionType.NoValue);
             var noUpdateOption = cmd.Option("-nu|--noupdate", string.Empty, CommandOptionType.NoValue);
+            var anyOption = cmd.Option("--any", string.Empty, CommandOptionType.NoValue);
             ipipOption.ShowInHelpText = false;
             adminOption.ShowInHelpText = false;
             synccnlsOption.ShowInHelpText = false;
             noUpdateOption.ShowInHelpText = false;
             chinaListOption.ShowInHelpText = false;
             loadcnOption.ShowInHelpText = false;
+            anyOption.ShowInHelpText = false;
 
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
@@ -110,9 +116,8 @@ namespace Arashi.Aoi
                         ? new IPEndPoint(IPAddress.Loopback, 443)
                         : new IPEndPoint(IPAddress.Loopback, 2020);
 
-                if ((File.Exists("/.dockerenv") ||
-                     Environment.GetEnvironmentVariables().Contains("ARASHI_RUNNING_IN_CONTAINER") ||
-                     Environment.GetEnvironmentVariables().Contains("ARASHI_ANY")) &&
+                if ((Environment.GetEnvironmentVariables().Contains("ARASHI_RUNNING_IN_CONTAINER") ||
+                     Environment.GetEnvironmentVariables().Contains("ARASHI_ANY") || File.Exists("/.dockerenv")) &&
                     !ipOption.HasValue()) ipEndPoint.Address = IPAddress.Any;
 
                 if (Environment.GetEnvironmentVariables().Contains("PORT") && !ipOption.HasValue())
@@ -158,17 +163,19 @@ namespace Arashi.Aoi
                 if (upOption.HasValue()) Config.UpStream = upOption.Value();
                 if (buOption.HasValue()) Config.BackUpStream = buOption.Value();
                 if (timeoutOption.HasValue()) Config.TimeOut = timeoutOption.ParsedValue;
-                if (retriesOption.HasValue()) Config.Retries = retriesOption.ParsedValue;
                 if (perfixOption.HasValue()) Config.QueryPerfix = "/" + perfixOption.Value().Trim('/').Trim('\\');
+                if (hostOption.HasValue()) Config.HostName = hostOption.Value();
                 Config.CacheEnable = cacheOption.HasValue();
                 Config.ChinaListEnable = chinaListOption.HasValue();
-                Config.RankEnable = rankOption.HasValue();
+                //Config.RankEnable = rankOption.HasValue();
                 Config.LogEnable = logOption.HasValue();
                 Config.OnlyTcpEnable = tcpOption.HasValue();
                 Config.EcsEnable = !noecsOption.HasValue();
+                Config.RateLimitingEnable = !notlimitedOption.HasValue();
                 Config.UseAdminRoute = adminOption.HasValue();
                 Config.UseIpRoute = ipipOption.HasValue();
                 Config.TransIdEnable = transidOption.HasValue();
+                Config.AnyTypeEnable = anyOption.HasValue();
                 if (logOption.HasValue() && !string.IsNullOrWhiteSpace(logOption.Value()))
                 {
                     var val = logOption.Value().ToLower().Trim();
@@ -183,7 +190,7 @@ namespace Arashi.Aoi
                     else if (val is "none" or "null" or "off") Config.CacheEnable = false;
                 }
 
-                if (Config.CacheEnable && Config.GeoCacheEnable || syncmmdbOption.HasValue() || Config.RankEnable)
+                if (Config.CacheEnable && Config.GeoCacheEnable || syncmmdbOption.HasValue() /*|| Config.RankEnable*/)
                 {
                     var setupBasePath = AppDomain.CurrentDomain.SetupInformation.ApplicationBase;
                     Console.WriteLine(
@@ -198,12 +205,17 @@ namespace Arashi.Aoi
 
                     if (!noUpdateOption.HasValue())
                     {
-                        var timer = new Timer(100) {Enabled = true, AutoReset = true};
+                        Parallel.Invoke(
+                            () => GetFileUpdate("GeoLite2-ASN.mmdb", Config.MaxmindAsnDbUrl),
+                            () => GetFileUpdate("GeoLite2-City.mmdb", Config.MaxmindCityDbUrl));
+
+                        var timer = new Timer(1000) {Enabled = true, AutoReset = true};
                         timer.Elapsed += (_, _) =>
                         {
                             timer.Interval = 3600000 * 24;
-                            GetFileUpdate("GeoLite2-ASN.mmdb", Config.MaxmindAsnDbUrl);
-                            GetFileUpdate("GeoLite2-City.mmdb", Config.MaxmindCityDbUrl);
+                            Parallel.Invoke(
+                                () => GetFileUpdate("GeoLite2-ASN.mmdb", Config.MaxmindAsnDbUrl),
+                                () => GetFileUpdate("GeoLite2-City.mmdb", Config.MaxmindCityDbUrl));
                         };
                     }
                 }
@@ -218,20 +230,20 @@ namespace Arashi.Aoi
                     {
                         timer.Interval = 3600000 * 24;
                         GetFileUpdate("China_WhiteList.List", DNSChinaConfig.Config.ChinaListUrl);
-                        Task.Run(() =>
-                        {
-                            while (true)
-                            {
-                                if (File.Exists(cnListPath))
-                                {
-                                    DNSChina.ChinaList = File.ReadAllLines(cnListPath).ToList()
-                                        .ConvertAll(DomainName.Parse);
-                                    break;
-                                }
+                        //Task.Run(() =>
+                        //{
+                        //    while (true)
+                        //    {
+                        //        if (File.Exists(cnListPath))
+                        //        {
+                        //            DNSChina.ChinaList = File.ReadAllLines(cnListPath).ToList()
+                        //                .ConvertAll(DomainName.Parse);
+                        //            break;
+                        //        }
 
-                                Thread.Sleep(1000);
-                            }
-                        });
+                        //        Thread.Sleep(1000);
+                        //    }
+                        //});
                     };
                 }
                 else if (File.Exists(AppDomain.CurrentDomain.SetupInformation.ApplicationBase + "China_WhiteList.List"))
@@ -240,6 +252,29 @@ namespace Arashi.Aoi
                 if (Config.UseAdminRoute)
                     Console.WriteLine(
                         $"Access Get AdminToken : /dns-admin/set-token?t={Config.AdminToken}");
+
+                if (!OperatingSystem.IsWindows() && File.Exists("/tmp/arashi-a.sock") && udsOption.HasValue())
+                {
+                    try
+                    {
+                        File.Delete("/var/run/arashi-a.sock");
+                        Task.Factory.StartNew(async () =>
+                        {
+                            for (var i = 0; i < 10; i++)
+                            {
+                                await Task.Delay(10000);
+                                if (!File.Exists("/var/run/arashi-a.sock")) continue;
+                                ChMod.Set("/var/run/arashi-a.sock");
+                                break;
+                            }
+                        });
+                    }
+                    catch (Exception e)
+                    {
+                        Console.WriteLine(e);
+                    }
+                }
+
 
                 var host = new WebHostBuilder()
                     .UseKestrel()
@@ -252,9 +287,10 @@ namespace Arashi.Aoi
                     .ConfigureKestrel(options =>
                     {
                         options.Limits.MaxRequestBodySize = 1024;
+                        options.Limits.MaxResponseBufferSize = 2048;
                         options.Listen(ipEndPoint, listenOptions =>
                         {
-                            listenOptions.Protocols = HttpProtocols.Http1AndHttp2;
+                            listenOptions.Protocols = HttpProtocols.Http1AndHttp2AndHttp3;
                             if (!httpsOption.HasValue()) return;
                             if (!pfxOption.HasValue() && !pemOption.HasValue()) listenOptions.UseHttps();
                             if (pfxOption.HasValue())
@@ -265,6 +301,7 @@ namespace Arashi.Aoi
                                 listenOptions.UseHttps(X509Certificate2.CreateFromPem(
                                     File.ReadAllText(pemOption.Value()), File.ReadAllText(keyOption.Value())));
                         });
+                        if (!OperatingSystem.IsWindows() && udsOption.HasValue()) options.ListenUnixSocket("/var/run/arashi-a.sock");
                     })
                     .UseStartup<Startup>()
                     .Build();
@@ -292,9 +329,9 @@ namespace Arashi.Aoi
 
             try
             {
-                if (File.Exists("/.dockerenv") ||
-                    Environment.GetEnvironmentVariables().Contains("DOTNET_RUNNING_IN_CONTAINER") ||
-                    Environment.GetEnvironmentVariables().Contains("ARASHI_RUNNING_IN_CONTAINER"))
+                if (Environment.GetEnvironmentVariables().Contains("DOTNET_RUNNING_IN_CONTAINER") ||
+                    Environment.GetEnvironmentVariables().Contains("ARASHI_RUNNING_IN_CONTAINER") ||
+                    File.Exists("/.dockerenv"))
                     Console.WriteLine("ArashiDNS Running in Docker Container");
                 if (Environment.GetEnvironmentVariables().Contains("ARASHI_VAR"))
                 {
@@ -352,13 +389,43 @@ namespace Arashi.Aoi
             }
             else Console.WriteLine();
 
-            if (!File.Exists(setupBasePath + file))
-                Task.Run(() =>
-                {
-                    Console.WriteLine($"Downloading {file}...");
-                    new WebClient().DownloadFile(url, setupBasePath + file);
-                    Console.WriteLine(file + " Download Done");
-                });
+            if (File.Exists(setupBasePath + file)) return;
+            Console.WriteLine($"Downloading {file}...");
+            File.WriteAllBytes(setupBasePath + file, new HttpClient().GetByteArrayAsync(url).Result);
+            Console.WriteLine(file + " Download Done");
+        }
+    }
+
+    public static class ChMod
+    {
+        [DllImport("libc", EntryPoint = "chmod", SetLastError = true)]
+        [SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "interop")]
+        public static extern int Chmod(string pathname, int mode);
+
+        // user permissions
+        const int S_IRUSR = 0x100;
+        const int S_IWUSR = 0x80;
+        const int S_IXUSR = 0x40;
+
+        // group permission
+        const int S_IRGRP = 0x20;
+        const int S_IWGRP = 0x10;
+        const int S_IXGRP = 0x8;
+
+        // other permissions
+        const int S_IROTH = 0x4;
+        const int S_IWOTH = 0x2;
+        const int S_IXOTH = 0x1;
+
+        public static void Set(string filename)
+        {
+            const int _0755 =
+                S_IRUSR | S_IXUSR | S_IWUSR
+                | S_IRGRP | S_IXGRP | S_IWGRP
+                | S_IROTH | S_IXOTH | S_IWOTH;
+
+            if (0 != Chmod(Path.GetFullPath(filename), (int)_0755))
+                throw new Exception("Could not set Unix socket permissions");
         }
     }
 }

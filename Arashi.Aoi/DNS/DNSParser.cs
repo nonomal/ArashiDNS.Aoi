@@ -2,6 +2,7 @@
 using System.Buffers;
 using System.Linq;
 using System.Net;
+using System.Net.Sockets;
 using System.Threading.Tasks;
 using ARSoft.Tools.Net;
 using ARSoft.Tools.Net.Dns;
@@ -15,7 +16,8 @@ namespace Arashi
         public static DnsMessage FromDnsJson(HttpContext context, bool ActiveEcs = true, byte EcsDefaultMask = 24)
         {
             var queryDictionary = context.Request.Query;
-            var dnsQuestion = new DnsQuestion(DomainName.Parse(queryDictionary["name"]), RecordType.A,
+            var dnsQuestion = new DnsQuestion(DomainName.Parse(queryDictionary["name"]),
+                context.Connection.RemoteIpAddress!.AddressFamily == AddressFamily.InterNetworkV6 ? RecordType.Aaaa : RecordType.A,
                 RecordClass.INet);
             if (queryDictionary.ContainsKey("type"))
                 if (Enum.TryParse(queryDictionary["type"], true, out RecordType rType))
@@ -37,19 +39,19 @@ namespace Arashi
             {
                 var ipStr = queryDictionary["edns_client_subnet"].ToString();
                 var ipNetwork = ipStr.Contains("/")
-                    ? IPNetwork.Parse(ipStr)
-                    : IPNetwork.Parse(ipStr, EcsDefaultMask);
+                    ? IPNetwork2.Parse(ipStr)
+                    : IPNetwork2.Parse(ipStr, EcsDefaultMask);
                 dnsQMsg.EDnsOptions.Options.Add(new ClientSubnetOption(
                     Equals(ipNetwork.Network, IPAddress.Any) ? (byte)0 : ipNetwork.Cidr, ipNetwork.Network));
             }
             else
             {
-                var realIp = RealIP.Get(context);
+                var realIp = context.Connection.RemoteIpAddress;
                 if (!Equals(realIp, IPAddress.Loopback))
                 {
                     dnsQMsg.EDnsOptions.Options.Add(
                         new ClientSubnetOption(EcsDefaultMask,
-                            IPNetwork.Parse(realIp.ToString(), EcsDefaultMask).Network));
+                            IPNetwork2.Parse(realIp.ToString(), EcsDefaultMask).Network));
                 }
             }
 
@@ -58,26 +60,34 @@ namespace Arashi
 
         public static DnsMessage FromWebBase64(string base64) => DnsMessage.Parse(DecodeWebBase64(base64));
 
-        public static DnsMessage FromWebBase64(HttpContext context, bool ActiveEcs = true, byte EcsDefaultMask = 24)
+        public static DnsMessage FromWebBase64(HttpContext context, bool ActiveEcs = true,
+            byte EcsDefaultMask = 24, byte EcsV6DefaultMask = 48)
+
         {
             var msg = FromWebBase64(context.Request.Query["dns"].ToString());
             if (!Config.EcsEnable || !ActiveEcs || context.Request.Query.ContainsKey("no-ecs")) return msg;
             if (IsEcsEnable(msg)) return msg;
             if (!msg.IsEDnsEnabled) msg.IsEDnsEnabled = true;
-            msg.EDnsOptions.Options.Add(new ClientSubnetOption(EcsDefaultMask,
-                IPNetwork.Parse(RealIP.Get(context).ToString(), EcsDefaultMask).Network));
+            var mask = context.Connection.RemoteIpAddress.AddressFamily == AddressFamily.InterNetworkV6
+                ? EcsV6DefaultMask : EcsDefaultMask;
+            msg.EDnsOptions.Options.Add(new ClientSubnetOption(mask,
+                IPNetwork2.Parse(context.Connection.RemoteIpAddress.ToString(), mask).Network));
+            msg.EDnsOptions.Options.RemoveAll(x => x.Type == EDnsOptionType.Padding);
             return msg;
         }
 
         public static async Task<DnsMessage> FromPostByteAsync(HttpContext context, bool ActiveEcs = true,
-            byte EcsDefaultMask = 24)
+            byte EcsDefaultMask = 24, byte EcsV6DefaultMask = 48)
         {
             var msg = DnsMessage.Parse((await context.Request.BodyReader.ReadAsync()).Buffer.ToArray());
             if (!Config.EcsEnable || !ActiveEcs || context.Request.Query.ContainsKey("no-ecs")) return msg;
             if (IsEcsEnable(msg)) return msg;
             if (!msg.IsEDnsEnabled) msg.IsEDnsEnabled = true;
-            msg.EDnsOptions.Options.Add(new ClientSubnetOption(EcsDefaultMask,
-                IPNetwork.Parse(RealIP.Get(context).ToString(), EcsDefaultMask).Network));
+            var mask = context.Connection.RemoteIpAddress.AddressFamily == AddressFamily.InterNetworkV6
+                ? EcsV6DefaultMask : EcsDefaultMask;
+            msg.EDnsOptions.Options.Add(new ClientSubnetOption(mask,
+                IPNetwork2.Parse(context.Connection.RemoteIpAddress.ToString(), EcsDefaultMask).Network));
+            msg.EDnsOptions.Options.RemoveAll(x => x.Type == EDnsOptionType.Padding);
             return msg;
         }
 

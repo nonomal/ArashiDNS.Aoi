@@ -23,7 +23,7 @@ namespace Arashi.Aoi.Routes
                     (current, item) =>
                         current +
                         $"{item.Key.ToUpper()}:" +
-                        $"{((item.Value as DnsCache.CacheEntity).List ?? new List<DnsRecordBase> {new TxtRecord(DomainName.Parse("PASS"), 600, item.Value.ToString())}).FirstOrDefault()}" +
+                        $"{((item.Value as DnsCache.CacheEntity).AnswerRecords ?? new List<DnsRecordBase> {new TxtRecord(DomainName.Parse("PASS"), 600, item.Value.ToString())}).FirstOrDefault()}" +
                         Environment.NewLine), headers: Startup.HeaderDict);
             });
             endpoints.Map(Config.AdminPerfix + "/cache/keys", async context =>
@@ -31,11 +31,6 @@ namespace Arashi.Aoi.Routes
                 if (!await CheckAdminToken(context)) return;
                 await context.WriteResponseAsync(string.Join(Environment.NewLine,
                     MemoryCache.Default.Select(item => $"{item.Key}:{item.Value}").ToList()), headers: Startup.HeaderDict);
-            });
-            endpoints.Map(Config.AdminPerfix + "/cnlist/ls", async context =>
-            {
-                if (!await CheckAdminToken(context)) return;
-                await context.WriteResponseAsync(string.Join(Environment.NewLine, DNSChina.ChinaList), headers: Startup.HeaderDict);
             });
             endpoints.Map(Config.AdminPerfix + "/cache/rm", async context =>
             {

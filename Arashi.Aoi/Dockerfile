@@ -1,9 +1,9 @@
 #See https://aka.ms/containerfastmode to understand how Visual Studio uses this Dockerfile to build your images for faster debugging.
 
-FROM mcr.microsoft.com/dotnet/core/aspnet:3.1-buster-slim AS base
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-bookworm-slim AS base
 WORKDIR /app
 
-FROM mcr.microsoft.com/dotnet/core/sdk:3.1-buster AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0-bookworm-slim AS build
 WORKDIR /src
 COPY ["Arashi.Aoi/Arashi.Aoi.csproj", "Arashi.Aoi/"]
 RUN dotnet restore "Arashi.Aoi/Arashi.Aoi.csproj"
@@ -16,6 +16,8 @@ RUN dotnet publish "Arashi.Aoi.csproj" -c Release -o /app/publish /p:PublishSing
 
 FROM base AS final
 WORKDIR /app
+RUN wget https://github.com/mili-tan/maxmind-geoip/releases/latest/download/GeoLite2-City.mmdb
+RUN wget https://github.com/mili-tan/maxmind-geoip/releases/latest/download/GeoLite2-ASN.mmdb
 COPY --from=publish /app/publish .
 EXPOSE 2020
 #ENTRYPOINT ["dotnet", "Arashi.Aoi.dll"]

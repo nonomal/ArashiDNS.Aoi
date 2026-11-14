@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Threading.Tasks;
+using ArashiDNS.Tools;
 using ARSoft.Tools.Net;
 using ARSoft.Tools.Net.Dns;
 
@@ -10,53 +12,127 @@ namespace Arashi
 {
     public class DNSChina
     {
-        public static List<DomainName> ChinaList = File.Exists(DNSChinaConfig.Config.ChinaListPath)
-            ? File.ReadAllLines(DNSChinaConfig.Config.ChinaListPath).ToList().ConvertAll(DomainName.Parse)
-            : new List<DomainName>();
-
-        public static bool IsChinaName(DomainName name) => ChinaList.Any(name.IsEqualOrSubDomainOf);
-
-        public static DnsMessage ResolveOverChinaDns(DnsMessage dnsMessage)
+        public static void Init()
         {
-            if (!DNSChinaConfig.Config.UseHttpDns)
-                return new DnsClient(IPAddress.Parse(DNSChinaConfig.Config.ChinaDnsIp), AoiConfig.Config.TimeOut)
-                    .SendMessage(dnsMessage);
+            try
+            {
+                if (!File.Exists(DNSChinaConfig.Config.ChinaListPath)) return;
+                Parallel.ForEachAsync(File.ReadAllLines(DNSChinaConfig.Config.ChinaListPath), async (item, _) => await AddTask(item));
+                GC.Collect();
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e);
+            }
+        }
+
+        private static async Task AddTask(string item)
+        {
+            try
+            {
+                if (item.StartsWith("#")) return;
+                await MFaster.FasterKv.UpsertAsync("CN:" + item.Trim('.'), "1");
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e);
+            }
+        }
+
+        public static async Task<bool> IsChinaNameAsync(DomainName name)
+        {
+            try
+            {
+                if (DNSChinaConfig.NoCnDomains.Any(name.IsEqualOrSubDomainOf))
+                    return false;
+                if (name.IsSubDomainOf(DomainName.Parse("cn")))
+                    return true;
+
+                return
+                    (await MFaster.FasterKv.ReadAsync("CN:" + name.ToString().TrimEnd('.'))).Item1.Found ||
+                    (await MFaster.FasterKv.ReadAsync("CN:" + string.Join(".", name.Labels.TakeLast(2)))).Item1.Found;
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e);
+                return false;
+            }
+        }
+
+        public static async Task<DnsMessage> ResolveOverChinaDns(DnsMessage dnsMessage)
+        {
+            if (!DNSChinaConfig.Config.UseHttpDns || dnsMessage.Questions.FirstOrDefault()!.RecordType != RecordType.A)
+                return await new DnsClient(IPAddress.Parse(DNSChinaConfig.Config.ChinaUpStream), AoiConfig.Config.TimeOut)
+                    .SendMessageAsync(dnsMessage);
+
             var domainName = dnsMessage.Questions.FirstOrDefault()?.Name.ToString().TrimEnd('.');
             var dnsStr = string.Empty;
-            if (dnsMessage.IsEDnsEnabled)
+
+            try
             {
-                foreach (var eDnsOptionBase in dnsMessage.EDnsOptions.Options.ToArray())
-                    if (eDnsOptionBase is ClientSubnetOption option)
-                    {
-                        var task = new WebClient().DownloadStringTaskAsync(
-                            string.Format(DNSChinaConfig.Config.HttpDnsEcsUrl, domainName, option.Address));
-                        task.Wait(1000);
-                        dnsStr = task.Result;
-                        break;
-                    }
+                var client = Startup.ClientFactory.CreateClient("DNSChina");
+                var ip = RealIP.GetFromDns(dnsMessage);
+                dnsStr = !Equals(ip, IPAddress.Any)
+                    ? await client.GetStringAsync(
+                        string.Format(DNSChinaConfig.Config.HttpDnsEcsUrl, domainName, ip))
+                    : await client.GetStringAsync(
+                        string.Format(DNSChinaConfig.Config.HttpDnsUrl, domainName));
             }
-            else
+            catch (Exception)
             {
-                var task = new WebClient().DownloadStringTaskAsync(
-                    string.Format(DNSChinaConfig.Config.HttpDnsUrl, domainName));
-                task.Wait(1000);
-                dnsStr = task.Result;
+                var res = await new ARSoft.Tools.Net.Dns.DnsClient(IPAddress.Parse(DNSChinaConfig.Config.ChinaUpStream),
+                        AoiConfig.Config.TimeOut)
+                    .SendMessageAsync(dnsMessage);
+
+                if (res == null || res.ReturnCode == ReturnCode.Refused || res.ReturnCode == ReturnCode.ServerFailure)
+                {
+                    dnsMessage.EDnsOptions.Options.Clear();
+                    res = await new ARSoft.Tools.Net.Dns.DnsClient(IPAddress.Parse(DNSChinaConfig.Config.ChinaUpStream),
+                            AoiConfig.Config.TimeOut)
+                        .SendMessageAsync(dnsMessage);
+                }
+
+                if (res != null && res.AnswerRecords.Any())
+                    return res;
             }
 
             if (string.IsNullOrWhiteSpace(dnsStr)) throw new TimeoutException();
-            var ttlTime = Convert.ToInt32(dnsStr.Split(',')[1]);
-            var dnsAnswerList = dnsStr.Split(',')[0].Split(';');
+
             var dnsAMessage = new DnsMessage
             {
                 IsRecursionAllowed = true,
                 IsRecursionDesired = true,
                 TransactionID = dnsMessage.TransactionID,
-                AnswerRecords = new List<DnsRecordBase>(dnsAnswerList
-                    .Select(item => new ARecord(DomainName.Parse(domainName), ttlTime, IPAddress.Parse(item)))
-                    .Cast<DnsRecordBase>().ToList())
             };
+
+            if (dnsStr.StartsWith("0,") || dnsStr.StartsWith("0.0.0.1,"))
+            {
+                dnsAMessage.AnswerRecords = new List<DnsRecordBase>();
+                dnsAMessage.ReturnCode = ReturnCode.NxDomain;
+            }
+            else
+            {
+                var ttlTime = Convert.ToInt32(dnsStr.Split(',')[1]);
+                var dnsAnswerList = dnsStr.Split(',')[0].Split(';');
+
+                dnsAMessage.AnswerRecords = new List<DnsRecordBase>(dnsAnswerList
+                    .Select(item => new ARecord(DomainName.Parse(domainName), ttlTime, IPAddress.Parse(item)))
+                    .Cast<DnsRecordBase>().ToList());
+            }
+
             dnsAMessage.Questions.AddRange(dnsMessage.Questions);
-            dnsAMessage.AnswerRecords.Add(new TxtRecord(DomainName.Parse("china.arashi-msg"), 0,
+            try
+            {
+                dnsAMessage.IsEDnsEnabled = true;
+                if (RealIP.TryGetFromDns(dnsMessage, out var ecs))
+                    dnsAMessage.EDnsOptions.Options.Add(new ClientSubnetOption(24, ecs));
+            }
+            catch (Exception)
+            {
+                // ignored
+            }
+
+            dnsAMessage.AuthorityRecords.Add(new TxtRecord(DomainName.Parse("china.arashi-msg"), 0,
                 "ArashiDNS.P ChinaList"));
             return dnsAMessage;
         }

@@ -1,11 +1,9 @@
 using System;
 using System.IO;
 using System.Linq;
-using System.Net;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
-using Amazon.S3;
-using Arashi.Aoi.DNS;
 using ARSoft.Tools.Net;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Hosting;
@@ -20,24 +18,16 @@ namespace Arashi.Azure
         {
             Config = new AoiConfig
             {
-                RankEnable = true,
+                //RankEnable = true,
                 ChinaListEnable = true,
                 UseResolveRoute = true,
                 UseAdminRoute = true,
-                TransIdEnable = true
+                UseErikoRoute = true,
+                TransIdEnable = true,
+                RateLimitingEnable = true
             };
 
-            DNSRank.UseS3 = false;
-            DNSRank.S3Client = new AmazonS3Client(
-                "KeyID",
-                "ApplicationKey",
-                new AmazonS3Config
-                {
-                    ServiceURL = "https://s3.us-west-000.backblazeb2.com/"
-                }
-            );
-
-            if (Config.CacheEnable && Config.GeoCacheEnable || Config.RankEnable)
+            if (Config.CacheEnable && Config.GeoCacheEnable/* || Config.RankEnable*/)
             {
                 Console.WriteLine(
                     "This product includes GeoLite2 data created by MaxMind, available from https://www.maxmind.com");
@@ -57,20 +47,20 @@ namespace Arashi.Azure
                 {
                     timer.Interval = 3600000 * 24;
                     GetFileUpdate("China_WhiteList.List", DNSChinaConfig.Config.ChinaListUrl);
-                    Task.Run(() =>
-                    {
-                        while (true)
-                        {
-                            if (File.Exists(DNSChinaConfig.Config.ChinaListPath))
-                            {
-                                DNSChina.ChinaList = File.ReadAllLines(DNSChinaConfig.Config.ChinaListPath).ToList()
-                                    .ConvertAll(DomainName.Parse);
-                                break;
-                            }
+                    //Task.Run(() =>
+                    //{
+                    //    while (true)
+                    //    {
+                    //        if (File.Exists(DNSChinaConfig.Config.ChinaListPath))
+                    //        {
+                    //            DNSChina.ChinaList = File.ReadAllLines(DNSChinaConfig.Config.ChinaListPath).ToList()
+                    //                .ConvertAll(DomainName.Parse);
+                    //            break;
+                    //        }
 
-                            Thread.Sleep(1000);
-                        }
-                    });
+                    //        Thread.Sleep(1000);
+                    //    }
+                    //});
                 };
             }
 
@@ -102,7 +92,7 @@ namespace Arashi.Azure
                 Task.Run(() =>
                 {
                     Console.WriteLine($"Downloading {file}...");
-                    new WebClient().DownloadFile(url, setupBasePath + file);
+                    File.WriteAllBytes(setupBasePath + file, new HttpClient().GetByteArrayAsync(url).Result);
                     Console.WriteLine(file + " Download Done");
                 });
         }
